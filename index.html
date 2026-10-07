@@ -70,6 +70,35 @@ header h2{margin:0;font-size:1.15rem;flex:1;overflow:hidden;text-overflow:ellips
   #who{display:none}
   header,#log,#form{padding-left:14px;padding-right:14px}
 }
+.msg{position:relative}
+.ping .bub,.flash .bub,.flash .pic{outline:2px solid var(--accent);outline-offset:2px}
+.at{background:color-mix(in srgb,var(--accent) 22%,transparent);border-radius:4px;padding:0 3px;font-weight:600}
+.mine .at{background:rgba(255,255,255,.25)}
+.bub code{background:rgba(127,127,127,.25);border-radius:4px;padding:0 4px;font-family:ui-monospace,monospace;font-size:.9em}
+.bub a{color:inherit;text-decoration:underline}
+.ed{font-size:.72rem;opacity:.7;margin-left:6px}
+.re{background:none;border:0;border-left:3px solid var(--line);color:var(--muted);font-size:.8rem;text-align:left;padding:0 8px;margin:0 4px 3px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pic{max-width:min(300px,100%);border-radius:12px;display:block}
+.rx{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.rx:empty{display:none}
+.rx button{background:var(--theirs);border:1px solid transparent;border-radius:10px;padding:1px 8px;font-size:.85rem}
+.rx button.me{border-color:var(--accent)}
+.bar{position:absolute;top:-16px;display:none;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:2px;z-index:2}
+.msg:not(.mine) .bar{left:8px}
+.mine .bar{right:8px}
+.msg:hover .bar,.msg:focus-within .bar{display:flex}
+.bar button{background:none;border:0;border-radius:8px;padding:2px 7px;font-size:.82rem}
+.bar button:hover{background:var(--theirs)}
+@media (hover:none){.bar{position:static;display:flex;margin-top:3px}}
+#ctx{display:flex;align-items:center;justify-content:space-between;padding:6px 20px;background:var(--theirs);font-size:.88rem;color:var(--muted)}
+#ac,#gifs{margin:0 20px;border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
+#ac button{display:block;width:100%;text-align:left;background:none;border:0;padding:8px 12px}
+#ac button:hover{background:var(--theirs)}
+#gifs{padding:10px;display:grid;gap:8px}
+#gifs small{color:var(--muted)}
+#gg{display:flex;flex-wrap:wrap;gap:6px;max-height:220px;overflow:auto}
+#gg img{height:80px;border-radius:8px;cursor:pointer}
+#form .ghost{background:var(--theirs);color:var(--ink)}
 </style>
 </head>
 <body>
@@ -111,7 +140,11 @@ header h2{margin:0;font-size:1.15rem;flex:1;overflow:hidden;text-overflow:ellips
       <button id="out" class="link">Sign out</button>
     </header>
     <div id="log" aria-live="polite"><p id="empty" hidden>Nothing here yet. Send the first message.</p></div>
+    <div id="ctx" hidden><span id="ctxt"></span><button type="button" id="ctxx" class="link">Cancel</button></div>
+    <div id="ac" hidden></div>
+    <div id="gifs" hidden><input id="gq" placeholder="Search GIFs" aria-label="Search GIFs"><div id="gg"></div><small>Powered by GIPHY</small></div>
     <form id="form">
+      <button type="button" id="gifbtn" class="ghost">GIF</button>
       <textarea id="text" rows="1" maxlength="2000" placeholder="Write a message" aria-label="Message"></textarea>
       <button>Send</button>
     </form>
@@ -126,7 +159,9 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const $ = s => document.querySelector(s);
 const saved = () => { try { return JSON.parse(localStorage.getItem('murmur') || '{}'); } catch { return {}; } };
-let db, me = null, room = 'general', rooms = [], chan = null, last = null, seen = new Set(), signup = false, tt;
+const GIPHY_KEY = ''; // a free key from developers.giphy.com turns on the GIF picker
+const EMOJI = ['👍', '❤️', '😂', '🎉'];
+let db, me = null, room = 'general', rooms = [], chan = null, last = null, msgs = new Map(), rx = new Map(), names = new Set(), ctx = null, signup = false, tt, gt;
 
 const show = id => ['setup', 'auth', 'app'].forEach(s => $('#' + s).hidden = s !== id);
 const nameOf = u => u.user_metadata?.username || u.email.split('@')[0];
@@ -174,7 +209,7 @@ function renderRooms() {
 }
 
 async function openRoom(r) {
-  room = r; last = null; seen = new Set();
+  room = r; last = null; msgs = new Map(); rx = new Map(); setCtx();
   renderRooms();
   $('#title').textContent = r;
   $('#log').querySelectorAll('.msg').forEach(n => n.remove());
@@ -183,37 +218,141 @@ async function openRoom(r) {
     .order('created_at', { ascending: false }).limit(100);
   if (error) return toast(error.message);
   if (room !== r) return;
-  data.reverse().forEach(addMsg);
+  data.reverse().forEach(m => msgs.set(m.id, m));
+  data.forEach(m => render(m));
+  if (data.length) {
+    const { data: rows } = await db.from('reactions').select('*').in('message_id', data.map(m => m.id));
+    if (room !== r) return;
+    (rows || []).forEach(x => rx.set(x.message_id, [...(rx.get(x.message_id) || []), x]));
+    data.forEach(m => renderRx(m.id));
+  }
   $('#empty').hidden = data.length > 0;
   const log = $('#log'); log.scrollTop = log.scrollHeight;
   $('#text').focus();
 }
 
-function addMsg(m) {
-  if (m.room !== room || seen.has(m.id)) return;
-  seen.add(m.id);
-  $('#empty').hidden = true;
-  const log = $('#log'), mine = m.user_id === me.id;
-  const stick = mine || log.scrollHeight - log.scrollTop - log.clientHeight < 120;
-  const row = document.createElement('div');
-  row.className = 'msg' + (mine ? ' mine' : '');
-  if (last !== m.user_id) {
+const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const reName = (n, f) => new RegExp('@' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w])', f);
+const isImg = s => /^https?:\/\/\S+\.(gif|png|jpe?g|webp)(\?\S*)?$/i.test(s);
+
+function fmt(t) {
+  let h = esc(t)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/\*([^*\n]+)\*/g, '<i>$1</i>')
+    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+  [...names].sort((a, b) => b.length - a.length).forEach(n => { h = h.replace(reName(esc(n), 'gi'), '<span class="at">$&</span>'); });
+  return h;
+}
+
+function render(m, old) {
+  names.add(m.username);
+  const mine = m.user_id === me.id, row = document.createElement('div');
+  row.id = 'm-' + m.id;
+  row.className = 'msg' + (mine ? ' mine' : '') + (!mine && reName(nameOf(me), 'i').test(m.content) ? ' ping' : '');
+  if (old ? old.classList.contains('first') : last !== m.user_id || m.reply_to) {
     row.classList.add('first');
     const meta = document.createElement('div');
     meta.className = 'meta';
     meta.textContent = (mine ? '' : m.username + '  ') + clock(m.created_at);
     row.append(meta);
   }
-  const bub = document.createElement('div');
-  bub.className = 'bub'; bub.textContent = m.content; bub.title = clock(m.created_at);
-  row.append(bub); log.append(row);
-  last = m.user_id;
+  if (m.reply_to) {
+    const t = msgs.get(m.reply_to), re = document.createElement('button');
+    re.type = 'button'; re.className = 're';
+    re.textContent = t ? 'Replying to ' + t.username + ': ' + (isImg(t.content) ? 'image' : t.content.slice(0, 70)) : 'Replying to an earlier message';
+    re.onclick = () => {
+      const el = $('#m-' + m.reply_to); if (!el) return;
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1500);
+    };
+    row.append(re);
+  }
+  if (isImg(m.content)) {
+    const img = document.createElement('img');
+    img.className = 'pic'; img.src = m.content; img.alt = 'Image or GIF from ' + m.username; img.loading = 'lazy';
+    row.append(img);
+  } else {
+    const bub = document.createElement('div');
+    bub.className = 'bub'; bub.title = clock(m.created_at);
+    bub.innerHTML = fmt(m.content) + (m.edited_at ? '<span class="ed">(edited)</span>' : '');
+    row.append(bub);
+  }
+  const box = document.createElement('div'); box.className = 'rx'; row.append(box);
+  const bar = document.createElement('div'); bar.className = 'bar';
+  const act = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.onclick = fn; bar.append(b); };
+  EMOJI.forEach(e => act(e, () => react(m.id, e)));
+  act('Reply', () => setCtx('reply', m));
+  if (mine) { act('Edit', () => setCtx('edit', m)); act('Delete', () => del(m)); }
+  row.append(bar);
+  if (old) old.replaceWith(row); else { $('#log').append(row); last = m.user_id; }
+  renderRx(m.id);
+}
+
+function addMsg(m) {
+  if (m.room !== room || msgs.has(m.id)) return;
+  msgs.set(m.id, m);
+  $('#empty').hidden = true;
+  const log = $('#log'), stick = m.user_id === me.id || log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+  render(m);
   if (stick) log.scrollTop = log.scrollHeight;
+}
+
+function renderRx(id) {
+  const box = document.querySelector('#m-' + id + ' .rx'); if (!box) return;
+  const g = {};
+  (rx.get(id) || []).forEach(r => (g[r.emoji] ??= []).push(r.user_id));
+  box.innerHTML = '';
+  Object.entries(g).forEach(([e, u]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = e + ' ' + u.length; b.className = u.includes(me.id) ? 'me' : '';
+    b.onclick = () => react(id, e); box.append(b);
+  });
+}
+function setRx(id, e, uid, on) {
+  const a = (rx.get(id) || []).filter(r => !(r.user_id === uid && r.emoji === e));
+  if (on) a.push({ user_id: uid, emoji: e });
+  rx.set(id, a); renderRx(id);
+}
+async function react(id, e) {
+  const has = (rx.get(id) || []).some(r => r.user_id === me.id && r.emoji === e);
+  const { error } = has
+    ? await db.from('reactions').delete().match({ message_id: id, user_id: me.id, emoji: e })
+    : await db.from('reactions').insert({ message_id: id, emoji: e });
+  if (error) return toast(error.message);
+  setRx(id, e, me.id, !has);
+}
+
+async function del(m) {
+  if (!confirm('Delete this message?')) return;
+  const { error } = await db.from('messages').delete().eq('id', m.id);
+  if (error) return toast(error.message);
+  msgs.delete(m.id); $('#m-' + m.id)?.remove();
+}
+
+function setCtx(type, m) {
+  const was = ctx?.type; ctx = type ? { type, m } : null;
+  $('#ctx').hidden = !ctx;
+  if (ctx) $('#ctxt').textContent = type === 'reply' ? 'Replying to ' + m.username : 'Editing message';
+  if (type === 'edit') $('#text').value = m.content; else if (was === 'edit') $('#text').value = '';
+  $('#text').focus();
 }
 
 function subscribe() {
   chan = db.channel('murmur')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, p => addMsg(p.new))
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, p => {
+      const m = p.new;
+      if (m.user_id !== me.id && reName(nameOf(me), 'i').test(m.content)) toast(m.username + ' mentioned you in #' + m.room);
+      addMsg(m);
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, p => {
+      if (p.new.room === room && msgs.has(p.new.id)) { msgs.set(p.new.id, p.new); render(p.new, $('#m-' + p.new.id)); }
+    })
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, p => {
+      msgs.delete(p.old.id); $('#m-' + p.old.id)?.remove();
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reactions' }, p => msgs.has(p.new.message_id) && setRx(p.new.message_id, p.new.emoji, p.new.user_id, true))
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'reactions' }, p => msgs.has(p.old.message_id) && setRx(p.old.message_id, p.old.emoji, p.old.user_id, false))
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'rooms' }, p => {
       if (!rooms.includes(p.new.name)) { rooms.push(p.new.name); rooms.sort(); renderRooms(); }
     })
@@ -221,17 +360,54 @@ function subscribe() {
 }
 
 // Sending
+async function post(content) {
+  const edit = ctx?.type === 'edit';
+  const q = edit
+    ? db.from('messages').update({ content, edited_at: new Date().toISOString() }).eq('id', ctx.m.id)
+    : db.from('messages').insert({ room, content, reply_to: ctx?.m.id ?? null });
+  const { data, error } = await q.select().single();
+  if (error) { toast(error.message); return false; }
+  if (edit) { msgs.set(data.id, data); render(data, $('#m-' + data.id)); } else addMsg(data);
+  setCtx(); return true;
+}
 $('#form').onsubmit = async e => {
   e.preventDefault();
   const box = $('#text'), content = box.value.trim();
   if (!content) return;
-  box.value = ''; box.style.height = 'auto';
-  const { data, error } = await db.from('messages').insert({ room, content }).select().single();
-  if (error) { box.value = content; return toast(error.message); }
-  addMsg(data);
+  box.value = ''; box.style.height = 'auto'; $('#ac').hidden = true;
+  if (!await post(content)) box.value = content;
 };
-$('#text').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#form').requestSubmit(); } };
-$('#text').oninput = e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 120) + 'px'; };
+$('#text').onkeydown = e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#form').requestSubmit(); }
+  if (e.key === 'Escape') setCtx();
+};
+$('#text').oninput = e => {
+  const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 120) + 'px';
+  const m = t.value.slice(0, t.selectionStart).match(/@([^\s@]*)$/), ac = $('#ac');
+  const hits = m ? [...names].filter(n => n.toLowerCase().startsWith(m[1].toLowerCase()) && n !== nameOf(me)).slice(0, 5) : [];
+  ac.hidden = !hits.length; ac.innerHTML = '';
+  hits.forEach(n => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = '@' + n;
+    b.onclick = () => { t.setRangeText('@' + n + ' ', t.selectionStart - m[0].length, t.selectionStart, 'end'); ac.hidden = true; t.focus(); };
+    ac.append(b);
+  });
+};
+$('#ctxx').onclick = () => setCtx();
+
+// GIFs
+async function gifSearch(q) {
+  if (!GIPHY_KEY) { $('#gifs').hidden = true; return toast('GIFs need a free GIPHY key in GIPHY_KEY. You can also paste any image link.'); }
+  const res = await fetch('https://api.giphy.com/v1/gifs/' + (q ? 'search' : 'trending') + '?api_key=' + GIPHY_KEY + '&limit=18&rating=pg-13&q=' + encodeURIComponent(q));
+  const { data = [] } = await res.json().catch(() => ({}));
+  const g = $('#gg'); g.innerHTML = '';
+  data.forEach(x => {
+    const i = document.createElement('img'); i.src = x.images.fixed_height_small.url; i.alt = x.title || 'GIF';
+    i.onclick = () => { $('#gifs').hidden = true; if (ctx?.type === 'edit') setCtx(); post(x.images.fixed_height.url.split('?')[0]); };
+    g.append(i);
+  });
+}
+$('#gifbtn').onclick = () => { const p = $('#gifs'); p.hidden = !p.hidden; if (!p.hidden) { gifSearch(''); $('#gq').focus(); } };
+$('#gq').oninput = e => { clearTimeout(gt); gt = setTimeout(() => gifSearch(e.target.value.trim()), 350); };
 
 // Rooms
 $('#newroom').onsubmit = async e => {
