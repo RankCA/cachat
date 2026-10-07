@@ -29,7 +29,7 @@ label{display:grid;gap:6px;font-size:.9rem;color:var(--muted)}
 .card button:not(.link),#form button,#newroom button{background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;padding:10px 16px;font-weight:600}
 .link{background:none;border:0;color:var(--accent);padding:4px;font-weight:600}
 
-#app{height:100dvh;display:grid;grid-template-columns:240px minmax(0,1fr)}
+#app{height:100dvh;display:grid;grid-template-columns:64px 240px minmax(0,1fr)}
 aside{background:var(--side);color:var(--side-ink);padding:22px 14px;display:flex;flex-direction:column;gap:18px;min-height:0}
 .mark{font-size:1.9rem;font-weight:700;letter-spacing:-.04em;color:#fff;padding:0 8px}
 #rooms{display:flex;flex-direction:column;gap:2px;overflow:auto;flex:1}
@@ -60,14 +60,17 @@ header h2{margin:0;font-size:1.15rem;flex:1;overflow:hidden;text-overflow:ellips
 #toast{position:fixed;left:50%;bottom:90px;transform:translate(-50%,10px);background:var(--ink);color:var(--panel);padding:10px 14px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:90vw}
 #toast.on{opacity:1;transform:translate(-50%,0)}
 @media (max-width:700px){
-  #app{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+  #app{grid-template-columns:1fr;grid-template-rows:auto auto minmax(0,1fr)}
   aside{flex-direction:row;align-items:center;padding:10px 12px;gap:10px;overflow:hidden}
   .mark{font-size:1.3rem;padding:0}
   #rooms{flex-direction:row;overflow-x:auto}
   #rooms button{white-space:nowrap}
   #newroom{flex:none}
   #newroom input{width:92px}
-  #who{display:none}
+  #who,#sname,#invite{display:none}
+  #rail{flex-direction:row;overflow-x:auto;padding:8px 12px}
+  #newdm{flex:none}
+  #newdm select{width:90px}
   header,#log,#form{padding-left:14px;padding-right:14px}
 }
 .msg{position:relative}
@@ -99,6 +102,22 @@ header h2{margin:0;font-size:1.15rem;flex:1;overflow:hidden;text-overflow:ellips
 #gg{display:flex;flex-wrap:wrap;gap:6px;max-height:220px;overflow:auto}
 #gg img{height:80px;border-radius:8px;cursor:pointer}
 #form .ghost{background:var(--theirs);color:var(--ink)}
+#rail{background:color-mix(in srgb,var(--side) 70%,#000);padding:14px 8px;display:flex;flex-direction:column;gap:8px;align-items:center;overflow:auto}
+#rail button{flex:none;width:44px;height:44px;border-radius:22px;border:0;background:var(--side-active);color:#fff;font-weight:700;transition:border-radius .15s}
+#rail button:hover,#rail button.on{border-radius:14px}
+#rail button.on{background:var(--accent);color:var(--on-accent)}
+#sname{font-weight:600;color:#fff;padding:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#invite{background:none;border:0;color:var(--side-ink);text-align:left;padding:0 8px;text-decoration:underline}
+#rooms button[data-kind=dm]::before{content:'@'}
+#newdm{display:flex;gap:6px}
+#newdm select{flex:1;min-width:0;background:rgba(255,255,255,.08);color:#fff;border:0;border-radius:10px;padding:8px}
+#newdm select option{color:#000}
+#newdm button{background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;padding:8px 12px;font-weight:600}
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);padding:22px;max-width:380px;width:calc(100% - 32px)}
+dialog[open]{display:grid;gap:18px}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog form{display:grid;gap:8px}
+dialog button:not(.link){background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;padding:10px 16px;font-weight:600}
 </style>
 </head>
 <body>
@@ -127,10 +146,14 @@ header h2{margin:0;font-size:1.15rem;flex:1;overflow:hidden;text-overflow:ellips
 </section>
 
 <div id="app" hidden>
+  <nav id="rail" aria-label="Servers"></nav>
   <aside>
     <div class="mark">Murmur</div>
+    <div id="sname"></div>
+    <button type="button" id="invite" hidden>Copy invite code</button>
     <nav id="rooms" aria-label="Rooms"></nav>
     <form id="newroom"><input id="roomname" placeholder="New room" maxlength="30" aria-label="New room name"><button>Add</button></form>
+    <form id="newdm" hidden><select id="dmwho" aria-label="Start a conversation with"></select><button>Message</button></form>
   </aside>
   <main>
     <header>
@@ -150,6 +173,11 @@ header h2{margin:0;font-size:1.15rem;flex:1;overflow:hidden;text-overflow:ellips
     </form>
   </main>
 </div>
+<dialog id="dlg">
+  <form id="mkserver"><label>Create a server<input id="sn" maxlength="30" placeholder="Server name" required></label><button>Create server</button></form>
+  <form id="joinserver"><label>Join with an invite code<input id="jc" placeholder="Invite code" required></label><button>Join server</button></form>
+  <form method="dialog"><button class="link">Close</button></form>
+</dialog>
 <div id="toast" role="status"></div>
 
 <script>
@@ -161,7 +189,7 @@ const $ = s => document.querySelector(s);
 const saved = () => { try { return JSON.parse(localStorage.getItem('murmur') || '{}'); } catch { return {}; } };
 const GIPHY_KEY = ''; // a free key from developers.giphy.com turns on the GIF picker
 const EMOJI = ['👍', '❤️', '😂', '🎉'];
-let db, me = null, room = 'general', rooms = [], chan = null, last = null, msgs = new Map(), rx = new Map(), names = new Set(), ctx = null, signup = false, tt, gt;
+let db, me = null, room = 'general', rooms = [], chan = null, last = null, msgs = new Map(), rx = new Map(), names = new Set(), ctx = null, signup = false, tt, gt, servers = [], people = new Map(), cur = 'home';
 
 const show = id => ['setup', 'auth', 'app'].forEach(s => $('#' + s).hidden = s !== id);
 const nameOf = u => u.user_metadata?.username || u.email.split('@')[0];
@@ -180,15 +208,26 @@ function boot() {
   db.auth.onAuthStateChange((_e, s) => setTimeout(() => s?.user ? enter(s.user) : leave(), 0));
 }
 
+async function loadAll() {
+  const [a, b, c] = await Promise.all([
+    db.from('servers').select('*').order('created_at'),
+    db.from('rooms').select('*').order('name'),
+    db.from('profiles').select('*')]);
+  const err = a.error || b.error || c.error;
+  if (err) { toast(err.message); return false; }
+  servers = a.data; rooms = b.data;
+  people = new Map(c.data.map(x => [x.id, x.username]));
+  people.forEach(n => names.add(n));
+  return true;
+}
+
 async function enter(user) {
   if (me && me.id === user.id) return;
   me = user;
   $('#who').textContent = nameOf(user);
   show('app');
-  const { data, error } = await db.from('rooms').select('name').order('name');
-  if (error) return toast(error.message + ' Did you run schema.sql?');
-  rooms = data.map(r => r.name);
-  await openRoom(rooms.includes('general') ? 'general' : rooms[0]);
+  if (!await loadAll()) return;
+  await openView(servers[0]?.id ?? 'home');
   subscribe();
 }
 
@@ -198,20 +237,54 @@ function leave() {
   show('auth');
 }
 
+const visible = () => rooms.filter(r => cur === 'home' ? r.kind === 'dm' : r.server_id === cur);
+const roomName = r => r.kind === 'dm' ? people.get(r.dm_a === me.id ? r.dm_b : r.dm_a) || 'Someone' : r.name;
+
+function renderRail() {
+  const rail = $('#rail'); rail.innerHTML = '';
+  const add = (label, title, on, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.title = title; b.className = on ? 'on' : ''; b.onclick = fn; rail.append(b);
+  };
+  add('DM', 'Direct messages', cur === 'home', () => openView('home'));
+  servers.forEach(x => add(x.name.slice(0, 2), x.name, cur === x.id, () => openView(x.id)));
+  add('+', 'Create or join a server', false, () => $('#dlg').showModal());
+}
+
 function renderRooms() {
   const nav = $('#rooms'); nav.innerHTML = '';
-  rooms.forEach(r => {
+  const srv = servers.find(x => x.id === cur);
+  $('#sname').textContent = srv ? srv.name : 'Direct messages';
+  $('#invite').hidden = !srv; $('#newroom').hidden = !srv; $('#newdm').hidden = !!srv;
+  if (!srv) {
+    const sel = $('#dmwho'); sel.innerHTML = '';
+    people.forEach((n, id) => { if (id !== me.id) sel.append(new Option(n, id)); });
+  }
+  visible().forEach(r => {
     const b = document.createElement('button');
-    b.textContent = r; b.className = r === room ? 'on' : '';
-    b.onclick = () => openRoom(r);
-    nav.append(b);
+    b.textContent = roomName(r); b.dataset.kind = r.kind; b.className = r.id === room ? 'on' : '';
+    b.onclick = () => openRoom(r.id); nav.append(b);
   });
+}
+
+async function openView(v) {
+  cur = v; renderRail();
+  const first = visible()[0];
+  if (first) return openRoom(first.id);
+  room = null; msgs = new Map();
+  $('#log').querySelectorAll('.msg').forEach(n => n.remove());
+  $('#title').textContent = '';
+  $('#empty').textContent = v === 'home' ? 'No conversations yet. Pick someone from the list to start one.' : 'No channels yet. Add one from the sidebar.';
+  $('#empty').hidden = false;
+  renderRooms();
 }
 
 async function openRoom(r) {
   room = r; last = null; msgs = new Map(); rx = new Map(); setCtx();
   renderRooms();
-  $('#title').textContent = r;
+  const info = rooms.find(x => x.id === r);
+  $('#title').textContent = info ? (info.kind === 'dm' ? '@' : '#') + roomName(info) : '';
+  $('#empty').textContent = 'Nothing here yet. Send the first message.';
   $('#log').querySelectorAll('.msg').forEach(n => n.remove());
   $('#empty').hidden = true;
   const { data, error } = await db.from('messages').select('*').eq('room', r)
@@ -342,7 +415,9 @@ function subscribe() {
   chan = db.channel('murmur')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, p => {
       const m = p.new;
-      if (m.user_id !== me.id && reName(nameOf(me), 'i').test(m.content)) toast(m.username + ' mentioned you in #' + m.room);
+      const info = rooms.find(x => x.id === m.room), dm = info?.kind === 'dm';
+      if (m.user_id !== me.id && (dm ? m.room !== room : reName(nameOf(me), 'i').test(m.content)))
+        toast(dm ? m.username + ' sent you a message' : m.username + ' mentioned you in #' + (info?.name ?? 'a channel'));
       addMsg(m);
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, p => {
@@ -354,7 +429,7 @@ function subscribe() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reactions' }, p => msgs.has(p.new.message_id) && setRx(p.new.message_id, p.new.emoji, p.new.user_id, true))
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'reactions' }, p => msgs.has(p.old.message_id) && setRx(p.old.message_id, p.old.emoji, p.old.user_id, false))
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'rooms' }, p => {
-      if (!rooms.includes(p.new.name)) { rooms.push(p.new.name); rooms.sort(); renderRooms(); }
+      if (!rooms.some(x => x.id === p.new.id)) { rooms.push(p.new); renderRooms(); }
     })
     .subscribe(s => $('#live').classList.toggle('on', s === 'SUBSCRIBED'));
 }
@@ -409,16 +484,41 @@ async function gifSearch(q) {
 $('#gifbtn').onclick = () => { const p = $('#gifs'); p.hidden = !p.hidden; if (!p.hidden) { gifSearch(''); $('#gq').focus(); } };
 $('#gq').oninput = e => { clearTimeout(gt); gt = setTimeout(() => gifSearch(e.target.value.trim()), 350); };
 
-// Rooms
+// Channels, DMs and servers
 $('#newroom').onsubmit = async e => {
   e.preventDefault();
   const n = $('#roomname').value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
-  if (!n) return;
+  if (!n || cur === 'home') return;
   $('#roomname').value = '';
-  const { error } = await db.from('rooms').insert({ name: n });
-  if (error && error.code !== '23505') return toast(error.message);
-  if (!rooms.includes(n)) { rooms.push(n); rooms.sort(); }
-  openRoom(n);
+  const { data, error } = await db.from('rooms').insert({ name: n, server_id: cur }).select().single();
+  if (error) return toast(error.code === '23505' ? 'That channel already exists in this server.' : error.message);
+  if (!rooms.some(x => x.id === data.id)) rooms.push(data);
+  openRoom(data.id);
+};
+$('#newdm').onsubmit = async e => {
+  e.preventDefault();
+  const id = $('#dmwho').value; if (!id) return;
+  const { data, error } = await db.rpc('open_dm', { other: id });
+  if (error) return toast(error.message);
+  if (!rooms.some(x => x.id === data)) await loadAll();
+  cur = 'home'; renderRail(); openRoom(data);
+};
+$('#mkserver').onsubmit = async e => {
+  e.preventDefault();
+  const { data, error } = await db.from('servers').insert({ name: $('#sn').value.trim() }).select().single();
+  if (error) return toast(error.message);
+  $('#sn').value = ''; $('#dlg').close(); await loadAll(); openView(data.id);
+};
+$('#joinserver').onsubmit = async e => {
+  e.preventDefault();
+  const { data, error } = await db.rpc('join_server', { code: $('#jc').value });
+  if (error) return toast(error.message);
+  $('#jc').value = ''; $('#dlg').close(); await loadAll(); openView(data);
+};
+$('#invite').onclick = async () => {
+  const x = servers.find(v => v.id === cur); if (!x) return;
+  try { await navigator.clipboard.writeText(x.invite); } catch {}
+  toast('Invite code: ' + x.invite + '. Share it so others can join ' + x.name + '.');
 };
 
 // Auth
