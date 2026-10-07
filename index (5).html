@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Murmur</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+:root{--bg:#F2F4F9;--panel:#fff;--ink:#192033;--muted:#68728C;--line:#DDE2EE;--accent:#3D4FD6;--on-accent:#fff;--theirs:#E8ECF6;--side:#1E2766;--side-ink:#DCE1FF;--side-active:#3A47A8;--bad:#C0392B}
+@media (prefers-color-scheme:dark){:root{--bg:#0F1220;--panel:#161A2C;--ink:#E6E9F7;--muted:#8D97B5;--line:#262C45;--accent:#7F8CFF;--on-accent:#0E1230;--theirs:#212741;--side:#0B0E24;--side-ink:#C7CDF5;--side-active:#2A3380;--bad:#FF8A7A}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{font:16px/1.45 'Bricolage Grotesque',system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input,textarea{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.gate{min-height:100%;display:grid;place-items:center;padding:20px}
+.card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px;display:grid;gap:14px}
+.card h1{margin:0;font-size:2.2rem;letter-spacing:-.04em}
+.card p{margin:0;color:var(--muted)}
+.card .err{color:var(--bad);min-height:1.2em;font-size:.9rem}
+.card .err.ok{color:var(--accent)}
+label{display:grid;gap:6px;font-size:.9rem;color:var(--muted)}
+.card button:not(.link),#form button,#newroom button{background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;padding:10px 16px;font-weight:600}
+.link{background:none;border:0;color:var(--accent);padding:4px;font-weight:600}
+
+#app{height:100dvh;display:grid;grid-template-columns:240px minmax(0,1fr)}
+aside{background:var(--side);color:var(--side-ink);padding:22px 14px;display:flex;flex-direction:column;gap:18px;min-height:0}
+.mark{font-size:1.9rem;font-weight:700;letter-spacing:-.04em;color:#fff;padding:0 8px}
+#rooms{display:flex;flex-direction:column;gap:2px;overflow:auto;flex:1}
+#rooms button{text-align:left;background:none;border:0;color:inherit;padding:8px 10px;border-radius:8px}
+#rooms button::before{content:'#';opacity:.5;margin-right:6px}
+#rooms button:hover{background:rgba(255,255,255,.07)}
+#rooms button.on{background:var(--side-active);color:#fff}
+#newroom{display:flex;gap:6px}
+#newroom input{flex:1;min-width:0;background:rgba(255,255,255,.08);border-color:transparent;color:#fff}
+#newroom input::placeholder{color:var(--side-ink);opacity:.6}
+#newroom button{padding:8px 12px}
+main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel)}
+header{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid var(--line)}
+header h2{margin:0;font-size:1.15rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#live{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+#live.on{background:#2FB67C}
+#who{color:var(--muted);font-size:.9rem}
+#log{flex:1;overflow:auto;padding:18px 20px;display:flex;flex-direction:column;gap:3px}
+#empty{margin:auto;color:var(--muted)}
+.msg{max-width:min(520px,80%);align-self:flex-start;display:flex;flex-direction:column}
+.msg.mine{align-self:flex-end;align-items:flex-end}
+.msg.first{margin-top:12px}
+.meta{font-size:.78rem;color:var(--muted);margin:0 4px 2px}
+.bub{background:var(--theirs);padding:8px 12px;border-radius:16px 16px 16px 4px;white-space:pre-wrap;overflow-wrap:anywhere}
+.mine .bub{background:var(--accent);color:var(--on-accent);border-radius:16px 16px 4px 16px}
+#form{display:flex;gap:10px;padding:14px 20px;border-top:1px solid var(--line);align-items:flex-end}
+#form textarea{flex:1;resize:none;max-height:120px}
+#toast{position:fixed;left:50%;bottom:90px;transform:translate(-50%,10px);background:var(--ink);color:var(--panel);padding:10px 14px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:90vw}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+@media (max-width:700px){
+  #app{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+  aside{flex-direction:row;align-items:center;padding:10px 12px;gap:10px;overflow:hidden}
+  .mark{font-size:1.3rem;padding:0}
+  #rooms{flex-direction:row;overflow-x:auto}
+  #rooms button{white-space:nowrap}
+  #newroom{flex:none}
+  #newroom input{width:92px}
+  #who{display:none}
+  header,#log,#form{padding-left:14px;padding-right:14px}
+}
+</style>
+</head>
+<body>
+
+<section id="setup" class="gate" hidden>
+  <form id="setupform" class="card">
+    <h1>Murmur</h1>
+    <p>Connect your Supabase project. Both values are under Project Settings, then API. They stay in this browser.</p>
+    <label>Project URL<input id="url" type="url" placeholder="https://abcdefgh.supabase.co" required></label>
+    <label>Anon key<input id="key" autocomplete="off" required></label>
+    <button>Connect</button>
+  </form>
+</section>
+
+<section id="auth" class="gate" hidden>
+  <form id="authform" class="card">
+    <h1>Murmur</h1>
+    <p id="authlead">Sign in to pick up your conversations.</p>
+    <label id="unwrap" hidden>Display name<input id="username" maxlength="24" autocomplete="nickname"></label>
+    <label>Email<input id="email" type="email" autocomplete="email" required></label>
+    <label>Password<input id="password" type="password" minlength="6" autocomplete="current-password" required></label>
+    <p id="autherr" class="err" role="alert"></p>
+    <button id="authbtn">Sign in</button>
+    <button type="button" id="switch" class="link">New here? Create an account</button>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <aside>
+    <div class="mark">Murmur</div>
+    <nav id="rooms" aria-label="Rooms"></nav>
+    <form id="newroom"><input id="roomname" placeholder="New room" maxlength="30" aria-label="New room name"><button>Add</button></form>
+  </aside>
+  <main>
+    <header>
+      <h2 id="title"></h2>
+      <span id="live" title="Realtime connection"></span>
+      <span id="who"></span>
+      <button id="out" class="link">Sign out</button>
+    </header>
+    <div id="log" aria-live="polite"><p id="empty" hidden>Nothing here yet. Send the first message.</p></div>
+    <form id="form">
+      <textarea id="text" rows="1" maxlength="2000" placeholder="Write a message" aria-label="Message"></textarea>
+      <button>Send</button>
+    </form>
+  </main>
+</div>
+<div id="toast" role="status"></div>
+
+<script>
+// Your project. The anon key is designed to be public; row-level security protects the data.
+const SUPABASE_URL = 'https://rhansjhjzmqucmwwhewv.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJoYW5zamhqem1xdWNtd3doZXd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzNTYyNzEsImV4cCI6MjEwNjkzMjI3MX0.u1i-Js8Fx-ybBjb9k-lcPnfkfN1TIF2J39N10dauOjo';
+
+const $ = s => document.querySelector(s);
+const saved = () => { try { return JSON.parse(localStorage.getItem('murmur') || '{}'); } catch { return {}; } };
+let db, me = null, room = 'general', rooms = [], chan = null, last = null, seen = new Set(), signup = false, tt;
+
+const show = id => ['setup', 'auth', 'app'].forEach(s => $('#' + s).hidden = s !== id);
+const nameOf = u => u.user_metadata?.username || u.email.split('@')[0];
+const clock = d => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(tt); tt = setTimeout(() => t.classList.remove('on'), 4000);
+}
+function setErr(msg, ok) { const e = $('#autherr'); e.textContent = msg; e.classList.toggle('ok', !!ok); }
+
+function boot() {
+  const url = SUPABASE_URL || saved().url, key = SUPABASE_ANON_KEY || saved().key;
+  if (!url || !key) return show('setup');
+  db = supabase.createClient(url, key);
+  // Deferred so no Supabase call runs inside the auth callback itself.
+  db.auth.onAuthStateChange((_e, s) => setTimeout(() => s?.user ? enter(s.user) : leave(), 0));
+}
+
+async function enter(user) {
+  if (me && me.id === user.id) return;
+  me = user;
+  $('#who').textContent = nameOf(user);
+  show('app');
+  const { data, error } = await db.from('rooms').select('name').order('name');
+  if (error) return toast(error.message + ' Did you run schema.sql?');
+  rooms = data.map(r => r.name);
+  await openRoom(rooms.includes('general') ? 'general' : rooms[0]);
+  subscribe();
+}
+
+function leave() {
+  if (chan) db.removeChannel(chan);
+  chan = null; me = null; rooms = [];
+  show('auth');
+}
+
+function renderRooms() {
+  const nav = $('#rooms'); nav.innerHTML = '';
+  rooms.forEach(r => {
+    const b = document.createElement('button');
+    b.textContent = r; b.className = r === room ? 'on' : '';
+    b.onclick = () => openRoom(r);
+    nav.append(b);
+  });
+}
+
+async function openRoom(r) {
+  room = r; last = null; seen = new Set();
+  renderRooms();
+  $('#title').textContent = r;
+  $('#log').querySelectorAll('.msg').forEach(n => n.remove());
+  $('#empty').hidden = true;
+  const { data, error } = await db.from('messages').select('*').eq('room', r)
+    .order('created_at', { ascending: false }).limit(100);
+  if (error) return toast(error.message);
+  if (room !== r) return;
+  data.reverse().forEach(addMsg);
+  $('#empty').hidden = data.length > 0;
+  const log = $('#log'); log.scrollTop = log.scrollHeight;
+  $('#text').focus();
+}
+
+function addMsg(m) {
+  if (m.room !== room || seen.has(m.id)) return;
+  seen.add(m.id);
+  $('#empty').hidden = true;
+  const log = $('#log'), mine = m.user_id === me.id;
+  const stick = mine || log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+  const row = document.createElement('div');
+  row.className = 'msg' + (mine ? ' mine' : '');
+  if (last !== m.user_id) {
+    row.classList.add('first');
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = (mine ? '' : m.username + '  ') + clock(m.created_at);
+    row.append(meta);
+  }
+  const bub = document.createElement('div');
+  bub.className = 'bub'; bub.textContent = m.content; bub.title = clock(m.created_at);
+  row.append(bub); log.append(row);
+  last = m.user_id;
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+
+function subscribe() {
+  chan = db.channel('murmur')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, p => addMsg(p.new))
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'rooms' }, p => {
+      if (!rooms.includes(p.new.name)) { rooms.push(p.new.name); rooms.sort(); renderRooms(); }
+    })
+    .subscribe(s => $('#live').classList.toggle('on', s === 'SUBSCRIBED'));
+}
+
+// Sending
+$('#form').onsubmit = async e => {
+  e.preventDefault();
+  const box = $('#text'), content = box.value.trim();
+  if (!content) return;
+  box.value = ''; box.style.height = 'auto';
+  const { data, error } = await db.from('messages').insert({ room, content }).select().single();
+  if (error) { box.value = content; return toast(error.message); }
+  addMsg(data);
+};
+$('#text').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#form').requestSubmit(); } };
+$('#text').oninput = e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 120) + 'px'; };
+
+// Rooms
+$('#newroom').onsubmit = async e => {
+  e.preventDefault();
+  const n = $('#roomname').value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
+  if (!n) return;
+  $('#roomname').value = '';
+  const { error } = await db.from('rooms').insert({ name: n });
+  if (error && error.code !== '23505') return toast(error.message);
+  if (!rooms.includes(n)) { rooms.push(n); rooms.sort(); }
+  openRoom(n);
+};
+
+// Auth
+$('#switch').onclick = () => {
+  signup = !signup; setErr('');
+  $('#unwrap').hidden = !signup;
+  $('#authbtn').textContent = signup ? 'Create account' : 'Sign in';
+  $('#switch').textContent = signup ? 'Have an account? Sign in' : 'New here? Create an account';
+  $('#authlead').textContent = signup ? 'Pick a display name so people know who is talking.' : 'Sign in to pick up your conversations.';
+  $('#password').autocomplete = signup ? 'new-password' : 'current-password';
+};
+$('#authform').onsubmit = async e => {
+  e.preventDefault(); setErr('');
+  const email = $('#email').value.trim(), password = $('#password').value;
+  if (signup) {
+    const username = $('#username').value.trim();
+    if (!username) return setErr('Enter a display name.');
+    const back = location.protocol.startsWith('http') ? location.origin + location.pathname : undefined;
+    const { data, error } = await db.auth.signUp({ email, password, options: { data: { username }, emailRedirectTo: back } });
+    if (error) return setErr(error.message);
+    if (!data.session) { setErr('Check your inbox to confirm your email, then sign in.', true); }
+  } else {
+    const { error } = await db.auth.signInWithPassword({ email, password });
+    if (error) setErr(error.message);
+  }
+};
+$('#out').onclick = () => db.auth.signOut();
+
+// Connect screen
+$('#setupform').onsubmit = e => {
+  e.preventDefault();
+  localStorage.setItem('murmur', JSON.stringify({ url: $('#url').value.trim(), key: $('#key').value.trim() }));
+  boot();
+};
+
+boot();
+</script>
+</body>
+</html>
